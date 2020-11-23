@@ -1,0 +1,8 @@
+﻿  Interview.cpp
+D:\Code\mihoyo\Interview\Interview.cpp(97,19): warning C4804: “<=”: 在操作中使用类型“bool”不安全
+D:\Code\mihoyo\Interview\Interview.cpp(100,31): warning C4804: “<=”: 在操作中使用类型“bool”不安全
+D:\Code\mihoyo\Interview\Interview.cpp(103,32): warning C4804: “<=”: 在操作中使用类型“bool”不安全
+D:\Code\mihoyo\Interview\Interview.cpp(106,32): warning C4804: “<”: 在操作中使用类型“bool”不安全
+D:\Code\mihoyo\Interview\Interview.cpp(132,25): warning C4244: “初始化”: 从“double”转换到“__int64”，可能丢失数据
+D:\Code\mihoyo\Interview\Interview.cpp(133,49): warning C4244: “参数”: 从“__int64”转换到“int”，可能丢失数据
+  Interview.vcxproj -> D:\Code\mihoyo\Interview\x64\Debug\Interview.exe

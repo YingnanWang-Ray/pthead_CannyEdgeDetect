@@ -1,0 +1,2 @@
+D:\Code\mihoyo\Interview\x64\Debug\Interview.exe
+D:\Code\mihoyo\Interview\x64\Debug\Interview.pdb
