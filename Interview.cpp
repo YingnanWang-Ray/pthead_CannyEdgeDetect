@@ -1,5 +1,6 @@
-﻿#include <opencv2\imgproc\types_c.h>
-#include <opencv2\opencv.hpp>
+﻿#include <opencv2/imgproc/types_c.h>
+#include <opencv2/opencv.hpp>
+#include <opencv2/stitching.hpp>
 #include <string.h>
 #include <iostream>
 #include <math.h>
@@ -10,10 +11,12 @@
 #include <windows.h>
 
 #define pi 3.14159
-#define NUM_THREADS 5
+#define NUM_THREADS 8
 
 using namespace std;
 clock_t start,Tend;
+bool try_use_gpu = false;
+int Test_count = 0;
 
 struct thread_data {
     thread_data():img(), result(), guaSize(), hightThres(), lowThres(){}
@@ -62,7 +65,7 @@ void* ced(void* threadarg) {
     cv::Mat guassResult;
     filterImg.convertTo(guassResult, CV_8UC1);
 
-    // 计算梯度,用sobel算子
+    // sobel算子计算梯度
     cv::Mat gradX = cv::Mat::zeros(img.rows, img.cols, CV_64FC1); // 水平梯度
     cv::Mat gradY = cv::Mat::zeros(img.rows, img.cols, CV_64FC1); // 垂直梯度
     cv::Mat grad = cv::Mat::zeros(img.rows, img.cols, CV_64FC1);  // 梯度幅值
@@ -108,10 +111,6 @@ void* ced(void* threadarg) {
             }
         }
     }
-    // debug
-    //cv::Mat tempGrad;
-    //grad.convertTo(tempGrad, CV_8UC1);
-    //imshow("grad", tempGrad);
 
     // 梯度归一化
     double gradMax;
@@ -119,20 +118,14 @@ void* ced(void* threadarg) {
     if (gradMax != 0) {
         grad = grad / gradMax;
     }
-    // debug
-    //cv::Mat tempGradN;
-    //grad.convertTo(tempGradN, CV_8UC1);
-    //imshow("gradN", tempGradN);
 
-    // 双阈值确定
+    // 确定双阈值
     cv::Mat caculateValue = cv::Mat::zeros(img.rows, img.cols, CV_64FC1); // grad变成一维
     cv::resize(grad, caculateValue, cv::Size(1, (grad.rows * grad.cols)));
     // caculateValue.convertTo(caculateValue, CV_64FC1);
     cv::sort(caculateValue, caculateValue, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING); // 升序
     long long highIndex = img.rows * img.cols * hightThres;
     double highValue = caculateValue.at<double>(highIndex, 0); // 最大阈值
-    // debug
-    // cout<< "highValue: "<<highValue<<" "<<  caculateValue.cols << " "<<highIndex<< endl;
 
     double lowValue = highValue * lowThres; // 最小阈值
     // 3.非极大值抑制， 采用线性插值
@@ -193,10 +186,6 @@ void* ced(void* threadarg) {
             }
         }
     }
-    // NMS 和算阈值检测后的梯度图
-    //cv::Mat tempGradNMS;
-    //grad.convertTo(tempGradNMS, CV_8UC1);
-    //imshow("gradNMS", tempGradNMS);
 
     // 4.抑制孤立低阈值点 3*3. 找到高阈值就255
     for (int i = 1; i < img.rows - 1; i++) {
@@ -211,7 +200,6 @@ void* ced(void* threadarg) {
                     for (int j1 = 0; j1 < 3; j1++) {
                         if (grad(rect).at<double>(i1, j1) == highValue) {
                             result.at<double>(i, j) = 255;
-                            //cout << result.at<double>(i, j);
                             break;
                         }
                     }
@@ -224,10 +212,21 @@ void* ced(void* threadarg) {
     Tend = clock();
     double period = (double)(Tend - start) / CLOCKS_PER_SEC;
     cout << "Complete in" << period * 1000 << "ms" << endl;
-    imshow("result", result);
-    //cv::waitKey();
     //pthread_exit(NULL);
     return NULL;
+}
+
+//图像拼接处理Stitch
+cv::Mat MergeImg(vector<cv::Mat> imgs) {
+    cv::Mat result;
+    cv::Ptr<cv::Stitcher> stitcher = cv::Stitcher::create();
+    cv::Stitcher::Status status = stitcher->stitch(imgs, result);	// 使用stitch函数进行拼接
+    if (status != cv::Stitcher::OK)
+    {
+        cout << "Can't stitch images, error code = " << int(status) << endl;
+    }
+    cout << "Merge complete!" << endl;
+    return result;
 }
 
 //多线程
@@ -240,22 +239,27 @@ cv::Mat Multi_thread(cv::Mat img) {
     cv::Mat result[NUM_THREADS];
     cv::Mat grayImage[NUM_THREADS];
 
-    image[0] = img.rowRange(0 * (img.rows / NUM_THREADS), 1 * (img.rows / NUM_THREADS) + 20);
+    //image[0] = img.rowRange(0 * (img.rows / NUM_THREADS), 1 * (img.rows / NUM_THREADS) + 20);
+    //image[0] = img.colRange(0 * (img.cols / NUM_THREADS), 1 * (img.cols / NUM_THREADS) + 2 * (img.cols / NUM_THREADS));
+    image[0] = img.colRange(0 * (img.cols / NUM_THREADS), 1 * (img.cols / NUM_THREADS) + 2);
     cv::cvtColor(image[0], grayImage[0], CV_BGR2GRAY);
 
     for (int i = 1; i < NUM_THREADS - 1; i++)
     {
         //水平分割
         //img(cv::Rect(0, i * (img.cols / NUM_THREADS), img.rows, img.cols / NUM_THREADS)).copyTo(image[i]);
-        image[i] = img.rowRange(i * (img.rows / NUM_THREADS) - 20, (i + 1) * (img.rows / NUM_THREADS) + 20);
+        //image[i] = img.rowRange(i * (img.rows / NUM_THREADS) - 20, (i + 1) * (img.rows / NUM_THREADS) + 20);
         
         //竖直分割
         //img(cv::Rect(i * (img.rows / NUM_THREADS) ,0, img.rows / NUM_THREADS, img.cols)).copyTo(image[i]);    //Method1
-        //image[i] = img.colRange(i * (img.cols / NUM_THREADS), (i + 1) * (img.cols / NUM_THREADS));    //Method2
+        //image[i] = img.colRange((i - 1) * (img.cols / NUM_THREADS), (i + 2) * (img.cols / NUM_THREADS));    //Method2
+        image[i] = img.colRange(i * (img.cols / NUM_THREADS) - 2, (i + 1) * (img.cols / NUM_THREADS) + 2);
         cv::cvtColor(image[i], grayImage[i], CV_BGR2GRAY);
     }
 
-    image[NUM_THREADS - 1] = img.rowRange((NUM_THREADS - 1) * (img.rows / NUM_THREADS - 20), NUM_THREADS * (img.rows / NUM_THREADS));
+    //image[NUM_THREADS - 1] = img.rowRange((NUM_THREADS - 1) * (img.rows / NUM_THREADS) - 20, NUM_THREADS * (img.rows / NUM_THREADS));
+    //image[NUM_THREADS - 1] = img.colRange((NUM_THREADS - 1) * (img.cols / NUM_THREADS) - 2 * (img.cols / NUM_THREADS), NUM_THREADS * (img.cols / NUM_THREADS));
+    image[NUM_THREADS - 1] = img.colRange((NUM_THREADS - 1) * (img.cols / NUM_THREADS) - 2,img.cols);
     cv::cvtColor(image[NUM_THREADS - 1], grayImage[NUM_THREADS - 1], CV_BGR2GRAY);
 
     for (int i = 0; i < NUM_THREADS; ++i)
@@ -279,27 +283,100 @@ cv::Mat Multi_thread(cv::Mat img) {
     }
 
     /*图像拼接*/
-    //水平
-    cout << "Output image" << endl;
-    cv::Mat Out_image;
-    for (int i = 0; i < NUM_THREADS; ++i) {
-        Out_image.push_back(td[i].result);
+    //去除边界
+    vector<cv::Mat> imgs;
+    imgs.resize(NUM_THREADS);
+    imgs[0] = td[0].result.colRange(0, td[0].result.cols - 2);
+    for (int i = 1; i < NUM_THREADS - 1; i++) {
+        imgs[i] = td[i].result.colRange(2, td[i].result.cols - 2);
     }
-    cv::imshow("Output", Out_image);
-    cv::waitKey(5);
+    imgs[NUM_THREADS - 1] = td[NUM_THREADS - 1].result.colRange(2, td[NUM_THREADS - 1].result.cols);
+
+    cv::Mat O_i = imgs[0];
+    for (int i = 1; i < NUM_THREADS; ++i) {
+        cv::hconcat(O_i, imgs[i], O_i);//vconcat(hconcat)
+    }
+    //debug输出图像测试
+    /*
+    string outname = "D:\\Code\\mihoyo\\Interview\\temp\\";
+    outname += (char)(Test_count + 48);
+    outname += ".png";
+    Test_count++;
+    cv::imwrite(outname, O_i);
+    */
+    cv::imshow("Out_image", O_i);
+    cv::waitKey(3000);
+    return O_i;
+
+    //竖直分割拼接
+    /*
+    cout << "Output image" << endl;
+    cv::Mat Out_image = td[0].result;
+    for (int i = 1; i < NUM_THREADS; ++i) {
+        cv::hconcat(Out_image, td[i].result, Out_image);//vconcat(hconcat)
+    }
+    cv::imshow("Out_image", Out_image);
+    cv::waitKey(3000);
     return Out_image;
+    */
+    //预留接口——后期图片拼接边缘处理
+    /*
+    vector<cv::Mat> imgs;
+    cv::Mat Out_image; 
+    for (int i = 1; i < NUM_THREADS - 1; i++) {
+        imgs.push_back(td[i].result);
+    }
+    Out_image = MergeImg(imgs);
+    cv::imshow("Result", Out_image);
+    return Out_image;
+    */
 }
 
+
 int main() {
-    //debug
+    //debug单文件测试
     //cv::Mat img = cv::imread("D:\\Code\\mihoyo\\Interview\\PNG\\2.png");
     //Multi_thread(img);
-    
-    /*指定文件目录*/
-    cv::String pngfolder = "D:\\Code\\mihoyo\\Interview\\PNG";
-    cv::String outfolder = "D:\\Code\\mihoyo\\Interview\\Result";
-    //输入目标文件夹名称
+
+    //debug图像拼接
+    //彩色图片简单拼接测试
     /*
+    cv::Mat img0 = cv::imread("D:\\Code\\mihoyo\\Interview\\PNG\\campus_000.jpg");
+    cv::Mat img1 = cv::imread("D:\\Code\\mihoyo\\Interview\\PNG\\campus_001.jpg");
+    vector<cv::Mat> im;
+    im.push_back(img0);
+    im.push_back(img1);
+    cv::imshow("Test", MergeImg(im));
+    cv::waitKey(0);
+    */
+
+    //多图片测试
+    /*
+    cv::Mat img0 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\1.png");
+    cv::Mat img1 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\2.png");
+    cv::Mat img2 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\3.png");
+    cv::Mat img3 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\4.png");
+    cv::Mat img4 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\5.png");
+    cv::Mat img5 = cv::imread("D:\\Code\\mihoyo\\Interview\\temp\\6.png");
+    vector<cv::Mat> im;
+    im.push_back(img0);
+    im.push_back(img1);
+    im.push_back(img2);
+    im.push_back(img3);
+    im.push_back(img4);
+    im.push_back(img5);
+    cv::Mat tt = MergeImg(im);
+    cv::imshow("123", tt);
+    cv::waitKey(0);
+    */
+
+
+    /*指定文件目录*/
+    //debug
+    //cv::String pngfolder = "D:\\Code\\mihoyo\\Interview\\PNG";
+    //cv::String outfolder = "D:\\Code\\mihoyo\\Interview\\Result";
+    //输入目标文件夹名称
+
     cout << "Please input the folder path:" <<"          " << "Example: D:\\Code\\mihoyo\\Interview\\PNG" << endl;
     cv::String pngfolder;
     cin >> pngfolder;
@@ -309,7 +386,7 @@ int main() {
     cv::String outfolder;
     cin >> outfolder;
     cout << "Done" << endl << endl;
-    */
+
     Sleep(1000);
     system("cls");
 
